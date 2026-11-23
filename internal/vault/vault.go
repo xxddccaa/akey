@@ -74,7 +74,7 @@ func (p Params) Validate() error {
 }
 
 // Derive: master = Argon2id(pass, "akey-v1|"+salt); HKDF-SHA256(master) with
-// info "github.com/xxddccaa/akey/id", "github.com/xxddccaa/akey/enc", "github.com/xxddccaa/akey/write" -> ID, Enc, WriteToken.
+// info "akey/id", "akey/enc", "akey/write" -> ID, Enc, WriteToken.
 func Derive(passphrase string, p Params) (*Keys, error) {
 	if passphrase == "" {
 		return nil, errors.New("vault: empty passphrase")
@@ -89,9 +89,9 @@ func derive(passphrase string, p Params) *Keys {
 	salt := append([]byte(prefix), p.Salt...)
 	master := argon2.IDKey([]byte(passphrase), salt, p.Time, p.MemoryKiB, p.Threads, 32)
 	var k Keys
-	k.ID = hex.EncodeToString(expand(master, "github.com/xxddccaa/akey/id"))
-	copy(k.Enc[:], expand(master, "github.com/xxddccaa/akey/enc"))
-	k.WriteToken = hex.EncodeToString(expand(master, "github.com/xxddccaa/akey/write"))
+	k.ID = hex.EncodeToString(expand(master, "akey/id"))
+	copy(k.Enc[:], expand(master, "akey/enc"))
+	k.WriteToken = hex.EncodeToString(expand(master, "akey/write"))
 	return &k
 }
 

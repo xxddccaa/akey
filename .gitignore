@@ -4,3 +4,7 @@
 master*.yaml
 !testdata/master.example.yaml
 *.akey-bak-*
+# panel build outputs (make wasm)
+/internal/server/web/akey.wasm
+/internal/server/web/wasm_exec.js
+node_modules/

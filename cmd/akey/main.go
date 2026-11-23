@@ -26,6 +26,7 @@ const usageText = `akey — 一份加密主配置，一条命令配好 codex / x
 
 用法 / usage:
   akey serve  --listen :8787 --data DIR --dist DIR --host IP[,IP] [--insecure-http]
+  akey info   --data DIR [--host IP[,IP]] [--listen :8787] [--insecure-http]
   akey pull   [--server URL] [--pin PIN] [--only codex,claude] [--dry-run] [--yes] [--install-missing]
   akey push   FILE [--server URL] [--pin PIN] [--admin-token T]
   akey edit   [--server URL] [--pin PIN] [--admin-token T]
@@ -34,7 +35,8 @@ const usageText = `akey — 一份加密主配置，一条命令配好 codex / x
   akey version
 
 命令 / commands:
-  serve    在 VPS 上运行服务端（只保存密文）/ run the server (stores ciphertext only)
+  serve    在 VPS 上运行服务端（只保存密文，含网页面板）/ run the server + web panel (stores ciphertext only)
+  info     重新打印服务端信息：面板地址、admin token、客户端一键命令 / reprint panel URL, admin token, client one-liners
   pull     输入口令 → 拉取解密 → 写入各工具配置（旧文件自动备份）/ fetch, decrypt, write configs (with backups)
   push     加密并上传本地 master.yaml / encrypt and upload a local master.yaml
   edit     拉取 → $EDITOR 编辑 → 校验 → 加密上传 / edit the stored master config in $EDITOR
@@ -63,6 +65,8 @@ func main() {
 	switch cmd {
 	case "serve":
 		err = cmdServe(args)
+	case "info":
+		err = cmdInfo(args)
 	case "pull":
 		err = cmdPull(ctx, args)
 	case "push":
@@ -179,13 +183,39 @@ func cmdServe(args []string) error {
 		fs.Usage()
 		return errors.New("--data is required")
 	}
+	return server.Run(server.Config{Listen: *listen, DataDir: *data, DistDir: *dist, Hosts: splitHosts(*hosts),
+		InsecureHTTP: *insecure, Version: version})
+}
+
+func splitHosts(s string) []string {
 	var hs []string
-	for _, h := range strings.Split(*hosts, ",") {
+	for _, h := range strings.Split(s, ",") {
 		if h = strings.TrimSpace(h); h != "" {
 			hs = append(hs, h)
 		}
 	}
-	return server.Run(server.Config{Listen: *listen, DataDir: *data, DistDir: *dist, Hosts: hs, InsecureHTTP: *insecure})
+	return hs
+}
+
+func cmdInfo(args []string) error {
+	fs := newFlags("info", "info --data DIR [--host IP[,IP]] [--listen :8787] [--insecure-http]")
+	listen := fs.String("listen", ":8787", "the server's listen address (only the port is used)")
+	data := fs.String("data", "", "the server's data directory (e.g. /var/lib/akey)")
+	hosts := fs.String("host", "", "public IP(s)/hostname(s), comma-separated, for the printed URLs")
+	insecure := fs.Bool("insecure-http", false, "the server runs with --insecure-http")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	if err := noArgs(fs, pos); err != nil {
+		return err
+	}
+	if *data == "" {
+		fs.Usage()
+		return errors.New("--data is required")
+	}
+	return server.PrintInfo(server.Config{Listen: *listen, DataDir: *data, Hosts: splitHosts(*hosts),
+		InsecureHTTP: *insecure, Version: version}, os.Stdout)
 }
 
 func cmdPull(ctx context.Context, args []string) error {

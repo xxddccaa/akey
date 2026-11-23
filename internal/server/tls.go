@@ -27,14 +27,18 @@ import (
 // missing from its SANs only produce a warning.
 func (s *server) loadCert() error {
 	dir := filepath.Join(s.cfg.DataDir, "tls")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	certPath, keyPath := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
+	if s.readOnly {
+		if _, err := os.Stat(certPath); errors.Is(err, fs.ErrNotExist) {
+			return notInitialised(s.cfg.DataDir, certPath)
+		}
+	} else if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	certPath, keyPath := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
 	_, errC := os.Stat(certPath)
 	_, errK := os.Stat(keyPath)
 	switch {
-	case errors.Is(errC, fs.ErrNotExist) && errors.Is(errK, fs.ErrNotExist):
+	case errors.Is(errC, fs.ErrNotExist) && errors.Is(errK, fs.ErrNotExist) && !s.readOnly:
 		certPEM, keyPEM, err := genCert(s.cfg.Hosts)
 		if err != nil {
 			return err

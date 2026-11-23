@@ -9,6 +9,9 @@
 //	blobs/<id>/current               latest envelope
 //	blobs/<id>/v-<unixnano>          version history (newest 10 kept)
 //	blobs/<id>/write_token.sha256    hex(sha256(write token))
+//
+// The server never sees plaintext configs: the web panel (web/, served at /)
+// derives keys and encrypts in the browser via WASM, exactly like the CLI.
 package server
 
 import (
@@ -46,6 +49,7 @@ type Config struct {
 	DistDir      string   // directory of client binaries served under /dl/
 	Hosts        []string // public IPs/hostnames for the cert SAN and printed install commands
 	InsecureHTTP bool     // plain HTTP, no TLS (LAN only)
+	Version      string   // reported by GET /v1/info
 }
 
 const (
@@ -89,6 +93,11 @@ type server struct {
 	lim        *limiter
 	mu         sync.RWMutex
 	logf       func(format string, args ...any)
+	readOnly   bool         // `akey info`: never create state
+	probeHTTP  *http.Client // outbound client for POST /v1/probe
+	web        fs.FS        // panel files (flat); defaults to the embedded web/
+	panelOnce  sync.Once
+	panel      *panelSet
 }
 
 // Run starts the server and blocks until it fails.
@@ -106,20 +115,34 @@ func Run(cfg Config) error {
 		return err
 	}
 	s.banner(os.Stdout, ln.Addr())
+	go s.panelFiles() // pre-compress the panel so the first visitor doesn't wait
 	return s.serve(ln)
 }
 
 func newServer(cfg Config, logf func(string, ...any)) (*server, error) {
+	return newServerMode(cfg, logf, false)
+}
+
+// newServerMode loads (and unless readOnly, creates) the data dir state.
+func newServerMode(cfg Config, logf func(string, ...any), readOnly bool) (*server, error) {
 	if cfg.DataDir == "" {
 		return nil, errors.New("server: data dir is required")
 	}
 	cfg.Hosts = normalizeHosts(cfg.Hosts)
-	s := &server{cfg: cfg, lim: newLimiter(), logf: logf}
-	for _, d := range []string{cfg.DataDir, filepath.Join(cfg.DataDir, "blobs")} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			return nil, err
+	if cfg.Version == "" {
+		cfg.Version = "dev"
+	}
+	s := &server{cfg: cfg, lim: newLimiter(), logf: logf, readOnly: readOnly, probeHTTP: newProbeClient()}
+	if sub, err := fs.Sub(webFS, "web"); err == nil {
+		s.web = sub
+	}
+	if !readOnly {
+		for _, d := range []string{cfg.DataDir, filepath.Join(cfg.DataDir, "blobs")} {
+			if err := os.MkdirAll(d, 0o700); err != nil {
+				return nil, err
+			}
+			_ = os.Chmod(d, 0o700)
 		}
-		_ = os.Chmod(d, 0o700)
 	}
 	s.blobDir = filepath.Join(cfg.DataDir, "blobs")
 	if err := s.loadParams(); err != nil {
@@ -202,6 +225,9 @@ func normalizeHosts(in []string) []string {
 func (s *server) loadParams() error {
 	path := filepath.Join(s.cfg.DataDir, "params.json")
 	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) && s.readOnly {
+		return notInitialised(s.cfg.DataDir, path)
+	}
 	if errors.Is(err, fs.ErrNotExist) {
 		p, err := vault.DefaultParams()
 		if err != nil {
@@ -230,6 +256,9 @@ func (s *server) loadParams() error {
 func (s *server) loadAdminToken() error {
 	s.adminPath = filepath.Join(s.cfg.DataDir, "admin_token")
 	b, err := os.ReadFile(s.adminPath)
+	if errors.Is(err, fs.ErrNotExist) && s.readOnly {
+		return notInitialised(s.cfg.DataDir, s.adminPath)
+	}
 	if errors.Is(err, fs.ErrNotExist) {
 		tok, err := randHex(32)
 		if err != nil {
@@ -288,19 +317,23 @@ func writeFileAtomic(path string, data []byte) error {
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/params", s.getParams)
+	mux.HandleFunc("GET /v1/info", s.getInfo)
 	mux.HandleFunc("GET /v1/blob/{id}", s.getBlob)
 	mux.HandleFunc("PUT /v1/blob/{id}", s.putBlob)
+	mux.HandleFunc("GET /v1/blob/{id}/versions", s.listBlobVersions)
+	mux.HandleFunc("GET /v1/blob/{id}/versions/{v}", s.getBlobVersion)
+	mux.HandleFunc("POST /v1/probe", s.probe)
 	mux.HandleFunc("GET /i", s.install(func() *template.Template { return s.sh }))
 	mux.HandleFunc("GET /i.ps1", s.install(func() *template.Template { return s.ps }))
 	mux.HandleFunc("GET /dl/{file}", s.download)
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		io.WriteString(w, "akey server. Install: GET /i (sh) or /i.ps1 (PowerShell).\n")
-	})
+	mux.HandleFunc("GET /{$}", s.panelIndex)
+	mux.HandleFunc("GET /assets/{file}", s.panelAsset)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
 		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
 		mux.ServeHTTP(w, r)
 	})
 }
@@ -360,16 +393,161 @@ func (s *server) authorize(r *http.Request, dir, token string) (exists bool, sta
 		s.logf("read write token: %v", err)
 		return false, http.StatusInternalServerError, "internal error"
 	}
-	auth := r.Header.Get("Authorization")
-	const pfx = "Bearer "
-	if len(auth) <= len(pfx) || !strings.EqualFold(auth[:len(pfx)], pfx) {
+	bearer, ok := bearerToken(r)
+	if !ok {
 		return false, http.StatusUnauthorized, "admin token required to create a new id"
 	}
-	got := sha256.Sum256([]byte(strings.TrimSpace(auth[len(pfx):])))
-	if subtle.ConstantTimeCompare(got[:], s.adminHash[:]) != 1 {
+	if !s.adminOK(bearer) {
 		return false, http.StatusForbidden, "invalid admin token"
 	}
 	return false, 0, ""
+}
+
+// bearerToken returns the token of an "Authorization: Bearer <token>" header.
+func bearerToken(r *http.Request) (string, bool) {
+	auth := r.Header.Get("Authorization")
+	const pfx = "Bearer "
+	if len(auth) <= len(pfx) || !strings.EqualFold(auth[:len(pfx)], pfx) {
+		return "", false
+	}
+	return strings.TrimSpace(auth[len(pfx):]), true
+}
+
+// adminOK compares tok with the admin token in constant time.
+func (s *server) adminOK(tok string) bool {
+	got := sha256.Sum256([]byte(strings.TrimSpace(tok)))
+	return subtle.ConstantTimeCompare(got[:], s.adminHash[:]) == 1
+}
+
+// checkWriteToken verifies token against dir's stored hash: 0 when it
+// matches, 404 for an unknown id, 403 on mismatch. Caller holds s.mu.
+func (s *server) checkWriteToken(dir, token string) (status int, msg string) {
+	stored, err := os.ReadFile(filepath.Join(dir, "write_token.sha256"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return http.StatusNotFound, "not found"
+	}
+	if err != nil {
+		s.logf("read write token: %v", err)
+		return http.StatusInternalServerError, "internal error"
+	}
+	want := []byte(strings.TrimSpace(string(stored)))
+	got := []byte(vault.HashWriteToken(token))
+	if subtle.ConstantTimeCompare(want, got) != 1 {
+		return http.StatusForbidden, "write token mismatch"
+	}
+	return 0, ""
+}
+
+// versionsAuth is the common prelude of the history endpoints: rate limit,
+// id + write token validation. On failure it has written the response.
+func (s *server) versionsAuth(w http.ResponseWriter, r *http.Request) (dir, token, ip string, ok bool) {
+	ip = clientIP(r)
+	if s.tooMany(w, ip) {
+		return "", "", ip, false
+	}
+	id := r.PathValue("id")
+	if !idRe.MatchString(id) {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return "", "", ip, false
+	}
+	token = r.Header.Get("X-Akey-Write-Token")
+	if token == "" {
+		s.miss(ip)
+		http.Error(w, "missing X-Akey-Write-Token", http.StatusUnauthorized)
+		return "", "", ip, false
+	}
+	if !tokenRe.MatchString(token) {
+		http.Error(w, "malformed X-Akey-Write-Token (want 64 lowercase hex)", http.StatusBadRequest)
+		return "", "", ip, false
+	}
+	return filepath.Join(s.blobDir, id), token, ip, true
+}
+
+type versionInfo struct {
+	Version int64 `json:"version"`
+	Size    int64 `json:"size"`
+	Current bool  `json:"current"`
+}
+
+// listBlobVersions: GET /v1/blob/{id}/versions -> {"versions":[...]} newest first.
+func (s *server) listBlobVersions(w http.ResponseWriter, r *http.Request) {
+	dir, token, ip, ok := s.versionsAuth(w, r)
+	if !ok {
+		return
+	}
+	s.mu.RLock()
+	status, msg := s.checkWriteToken(dir, token)
+	var out []versionInfo
+	if status == 0 {
+		vers := listVersions(dir)
+		out = make([]versionInfo, 0, len(vers))
+		for i := len(vers) - 1; i >= 0; i-- {
+			st, err := os.Stat(filepath.Join(dir, "v-"+strconv.FormatInt(vers[i], 10)))
+			if err != nil {
+				continue
+			}
+			out = append(out, versionInfo{Version: vers[i], Size: st.Size(), Current: i == len(vers)-1})
+		}
+	}
+	s.mu.RUnlock()
+	if status != 0 {
+		if status != http.StatusInternalServerError {
+			s.miss(ip)
+		}
+		http.Error(w, msg, status)
+		return
+	}
+	writeJSON(w, map[string]any{"versions": out})
+}
+
+// getBlobVersion: GET /v1/blob/{id}/versions/{v} -> that envelope.
+func (s *server) getBlobVersion(w http.ResponseWriter, r *http.Request) {
+	dir, token, ip, ok := s.versionsAuth(w, r)
+	if !ok {
+		return
+	}
+	vs := r.PathValue("v")
+	v, err := strconv.ParseInt(vs, 10, 64)
+	if err != nil || v <= 0 || strconv.FormatInt(v, 10) != vs {
+		http.Error(w, "invalid version", http.StatusBadRequest)
+		return
+	}
+	s.mu.RLock()
+	status, msg := s.checkWriteToken(dir, token)
+	var data []byte
+	if status == 0 {
+		data, err = os.ReadFile(filepath.Join(dir, "v-"+vs))
+	}
+	s.mu.RUnlock()
+	switch {
+	case status == http.StatusInternalServerError:
+		http.Error(w, msg, status)
+		return
+	case status != 0:
+		s.miss(ip)
+		http.Error(w, msg, status)
+		return
+	case errors.Is(err, fs.ErrNotExist):
+		http.Error(w, "version not found", http.StatusNotFound)
+		return
+	case err != nil:
+		s.logf("read version: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Akey-Version", vs)
+	w.Write(data)
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(append(b, '\n'))
 }
 
 func (s *server) putBlob(w http.ResponseWriter, r *http.Request) {
@@ -499,18 +677,24 @@ func listVersions(dir string) []int64 {
 
 type installData struct{ Server, Pin, CertSHA256 string }
 
+// baseURL is scheme://host[:port] as the client reached us; hostile Host
+// headers fall back to the configured host.
+func (s *server) baseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	if !hostRe.MatchString(host) {
+		host = s.fallback
+	}
+	return scheme + "://" + host
+}
+
 func (s *server) install(t func() *template.Template) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		host := r.Host
-		if !hostRe.MatchString(host) {
-			host = s.fallback
-		}
 		var buf bytes.Buffer
-		if err := t().Execute(&buf, installData{scheme + "://" + host, s.pin, s.certSHA}); err != nil {
+		if err := t().Execute(&buf, installData{s.baseURL(r), s.pin, s.certSHA}); err != nil {
 			s.logf("render installer: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return

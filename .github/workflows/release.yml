@@ -1,0 +1,51 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false # release builds start clean
+
+      - name: Test
+        run: make test
+
+      - name: Build release binaries
+        env:
+          TAG: ${{ github.ref_name }}
+        run: make dist VERSION="$TAG"
+
+      # Asset names are a contract with the server's /dl/ whitelist,
+      # install.sh / install.ps1 and scripts/install-server.sh.
+      - name: Check assets
+        run: |
+          bins='akey-darwin-amd64 akey-darwin-arm64 akey-linux-amd64 akey-linux-arm64 akey-windows-amd64.exe akey-windows-arm64.exe'
+          got=$(cd dist && printf '%s\n' * | LC_ALL=C sort | xargs)
+          [ "$got" = "SHA256SUMS $bins" ] || { echo "unexpected dist/: $got"; exit 1; }
+          sums=$(awk '{print $2}' dist/SHA256SUMS | LC_ALL=C sort | xargs)
+          [ "$sums" = "$bins" ] || { echo "unexpected SHA256SUMS entries: $sums"; exit 1; }
+          (cd dist && sha256sum -c SHA256SUMS)
+          test -f scripts/install-server.sh
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          args=(--title "$TAG" --generate-notes)
+          case "$TAG" in *-*) args+=(--prerelease) ;; esac
+          gh release create "$TAG" dist/* scripts/install-server.sh "${args[@]}"

@@ -1,11 +1,17 @@
-# akey server. Install:
+# akey server systemd unit - TEMPLATE.
+# The normal way to install is scripts/install-server.sh, which writes this
+# same unit (kept in sync there as a heredoc) with HOST/PORT filled in:
+#   curl -fsSL https://raw.githubusercontent.com/xxddccaa/akey/main/scripts/install-server.sh | sudo bash
+# Manual install instead:
 #   sudo install -m 0755 dist/akey-linux-amd64 /usr/local/bin/akey
 #   sudo mkdir -p /usr/local/share/akey/dist && sudo cp dist/akey-* dist/SHA256SUMS /usr/local/share/akey/dist/
-#   sudo cp deploy/akey.service /etc/systemd/system/   # then replace YOUR_IP below
+#   sudo cp deploy/akey.service /etc/systemd/system/   # then replace YOUR_IP and 8787 below
 #   sudo systemctl daemon-reload && sudo systemctl enable --now akey
-#   sudo journalctl -u akey -n 50   # banner: pin, install commands, one-time admin token
+#   sudo akey info --data /var/lib/akey --host YOUR_IP --listen :8787   # panel URL, admin token, one-liners
+# Ports below 1024 need CapabilityBoundingSet=/AmbientCapabilities=CAP_NET_BIND_SERVICE.
 [Unit]
-Description=akey - encrypted agent config server
+Description=akey - encrypted agent config server (API + web panel)
+Documentation=https://github.com/xxddccaa/akey
 After=network-online.target
 Wants=network-online.target
 

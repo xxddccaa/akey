@@ -29,34 +29,51 @@ func shPlainOneLiner(base string) string {
 	return "curl -fsSL " + base + "/i | sh"
 }
 
+func (s *server) scheme() string {
+	if s.cfg.InsecureHTTP {
+		return "http"
+	}
+	return "https"
+}
+
+// banner is printed by `akey serve` once it listens on addr.
 func (s *server) banner(w io.Writer, addr net.Addr) {
 	port := "8787"
 	if a, ok := addr.(*net.TCPAddr); ok {
 		port = strconv.Itoa(a.Port)
 	}
-	scheme := "https"
-	if s.cfg.InsecureHTTP {
-		scheme = "http"
-	}
+	s.writeBanner(w, fmt.Sprintf("akey %s server listening on %s://%s\n", s.cfg.Version, s.scheme(), addr), port, s.adminNew)
+}
+
+// writeBanner prints header plus connection details for port. showAdmin
+// prints the admin token itself (first start, or `akey info`).
+func (s *server) writeBanner(w io.Writer, header, port string, showAdmin bool) {
+	scheme := s.scheme()
 	var b strings.Builder
 	p := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
 
-	p("akey server listening on %s://%s\n", scheme, addr)
+	p("%s", header)
 	p("  data dir:    %s\n", s.cfg.DataDir)
-	if s.cfg.DistDir != "" {
+	switch {
+	case s.cfg.DistDir != "":
 		p("  dist dir:    %s\n", s.cfg.DistDir)
-	} else {
+	case !s.readOnly: // `akey info` doesn't know the server's --dist
 		p("  dist dir:    (none; /dl/ downloads disabled)\n")
 	}
 	if !s.cfg.InsecureHTTP {
 		p("  tls pin:     %s\n", s.pin)
 		p("  cert sha256: %s\n", s.certSHA)
 	}
-	if s.adminNew {
+	switch {
+	case showAdmin && s.adminNew:
 		p("  admin token: %s\n", s.adminToken)
-		p("               (generated now, saved to %s; shown only once - needed for the first `akey push`)\n", s.adminPath)
-	} else {
-		p("  admin token: stored in %s\n", s.adminPath)
+		p("               (generated now, saved to %s; needed once to create your config:\n", s.adminPath)
+		p("                first panel save or `akey push`; print it again with `akey info --data %s`)\n", s.cfg.DataDir)
+	case showAdmin:
+		p("  admin token: %s\n", s.adminToken)
+		p("               (from %s; needed once to create your config: first panel save or `akey push`)\n", s.adminPath)
+	default:
+		p("  admin token: stored in %s (print it with `akey info --data %s`)\n", s.adminPath, s.cfg.DataDir)
 	}
 	if s.cfg.InsecureHTTP {
 		p("\n")
@@ -70,6 +87,14 @@ func (s *server) banner(w io.Writer, addr net.Addr) {
 	if len(hosts) == 0 {
 		hosts = []string{"127.0.0.1"}
 		p("\n  (no --host given; pass --host <public-ip> to print commands for remote machines)\n")
+	}
+	p("\nWeb panel (open in a browser; edit the config, history, install commands):\n")
+	for _, h := range hosts {
+		p("  panel: %s://%s/\n", scheme, net.JoinHostPort(h, port))
+	}
+	if !s.cfg.InsecureHTTP {
+		p("  The certificate is self-signed: before accepting the browser warning, check that the\n")
+		p("  certificate's SHA-256 fingerprint equals the cert sha256 above.\n")
 	}
 	for _, h := range hosts {
 		base := scheme + "://" + net.JoinHostPort(h, port)

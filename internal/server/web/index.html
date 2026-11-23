@@ -1,4 +1,93 @@
 <!doctype html>
+<html lang="zh-CN">
+<head>
 <meta charset="utf-8">
-<title>akey</title>
-<p>akey panel placeholder (replaced by the panel build).</p>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>akey 配置面板</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/assets/style.css">
+<script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+
+<section id="unlock">
+  <div class="unlock-card">
+    <div class="brand">
+      <div class="logo">ak</div>
+      <div>
+        <h1>akey 配置面板</h1>
+        <div class="muted small">编码 Agent 的统一配置</div>
+      </div>
+    </div>
+    <p class="muted">输入口令解锁你的主配置。加密和解密都在这个页面里完成，服务器只保存密文，看不到你的 Key。</p>
+
+    <form id="unlock-form" autocomplete="off">
+      <label class="field">
+        <span class="label">口令</span>
+        <input type="password" id="pass" name="password" autocomplete="current-password" required autofocus>
+      </label>
+      <div class="actions">
+        <button type="submit" class="primary" id="unlock-btn">解锁</button>
+      </div>
+    </form>
+    <div id="unlock-msg" class="msg"></div>
+
+    <div id="create-box" class="create-box" hidden>
+      <h2>这个口令还没有配置</h2>
+      <p class="muted small">如果你之前已经配置过，多半是口令输错了：不同的口令对应不同的配置，服务器无法告诉你“口令错误”。</p>
+      <div class="actions"><button type="button" id="create-start">创建新配置</button></div>
+      <form id="create-form" autocomplete="off" hidden>
+        <label class="field">
+          <span class="label">再输入一次口令</span>
+          <input type="password" id="pass2" autocomplete="new-password">
+        </label>
+        <div id="pass-weak" class="msg warn" hidden>口令少于 12 个字符。口令是解密配置的唯一凭据，建议用一句较长的话或随机生成的口令。</div>
+        <label class="field">
+          <span class="label">Admin token（创建新配置需要）</span>
+          <input type="password" id="admin" autocomplete="off" spellcheck="false">
+          <span class="hint">服务端启动时会在横幅里打印 admin token；也可以在 VPS 上运行 <code>sudo akey info --data /var/lib/akey</code> 查看。之后修改配置只需要口令。</span>
+        </label>
+        <div class="actions">
+          <button type="button" id="create-cancel">取消</button>
+          <button type="submit" class="primary">创建并打开编辑器</button>
+        </div>
+        <div id="create-msg" class="msg"></div>
+      </form>
+    </div>
+
+    <p class="foot">空闲 15 分钟自动锁定 · 口令、密钥和配置都不会写入浏览器存储<br><span id="build-info"></span></p>
+  </div>
+</section>
+
+<section id="editor" hidden>
+  <div class="sticky">
+    <header class="topbar">
+      <div class="logo sm">ak</div>
+      <span class="title">akey</span>
+      <span id="status" class="status"></span>
+      <span class="spacer"></span>
+      <button type="button" id="btn-validate">校验</button>
+      <button type="button" id="btn-save" class="primary">保存</button>
+      <button type="button" id="btn-lock" class="ghost">锁定</button>
+    </header>
+    <nav class="tabs" id="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="providers">厂商</button>
+      <button type="button" role="tab" data-tab="models">模型</button>
+      <button type="button" role="tab" data-tab="tools">工具</button>
+      <button type="button" role="tab" data-tab="yaml">YAML</button>
+      <button type="button" role="tab" data-tab="preview">预览</button>
+      <button type="button" role="tab" data-tab="history">历史</button>
+      <button type="button" role="tab" data-tab="install">安装</button>
+    </nav>
+  </div>
+  <div id="banner" class="banner"></div>
+  <main id="main"></main>
+</section>
+
+<div id="toasts" aria-live="polite"></div>
+<div id="busy" hidden><div class="spinner"></div><p id="busy-text"></p></div>
+<noscript><p class="msg err">这个页面需要启用 JavaScript。</p></noscript>
+</body>
+</html>

@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # setup-go installs the exact version from go.mod; never auto-download another.
+  GOTOOLCHAIN: local
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: make fmt-check
+
+      - name: Build panel (wasm)
+        run: make wasm
+
+      - name: go vet
+        run: make vet
+
+      - name: go test
+        run: make test
+
+      - name: Build
+        run: make build
+
+      - name: shellcheck
+        run: shellcheck internal/server/assets/install.sh scripts/install-server.sh

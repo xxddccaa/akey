@@ -106,7 +106,7 @@ func (a *api) do(ctx context.Context, method, path string, body []byte, hdr map[
 	if err != nil {
 		return nil, nil, err
 	}
-	req.Header.Set("User-Agent", "github.com/xxddccaa/akey/"+Version)
+	req.Header.Set("User-Agent", "akey/"+Version)
 	for k, v := range hdr {
 		if v != "" {
 			req.Header.Set(k, v)

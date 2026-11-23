@@ -158,3 +158,22 @@ func TestHashWriteToken(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// TestDeriveKnownAnswer freezes the key-derivation protocol (salt prefix,
+// HKDF info strings, output encoding). If this fails, every config already
+// stored on a server would become unreachable — bump Params.Version instead.
+func TestDeriveKnownAnswer(t *testing.T) {
+	salt := make([]byte, 32)
+	for i := range salt {
+		salt[i] = byte(i)
+	}
+	k, err := Derive("correct horse battery staple", Params{Version: 1, Salt: salt, Time: 1, MemoryKiB: 8192, Threads: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantID = "5314cfa4e9509662c3b343be3471da1a44a21e73c98c29445bb6edad12c70eb7"
+	const wantWT = "b7742d0bea2efaba4007f640173b6fd7aedfb2483746a2bc5f741276410a3aad"
+	if k.ID != wantID || k.WriteToken != wantWT {
+		t.Fatalf("derivation changed:\n id=%s\n wt=%s", k.ID, k.WriteToken)
+	}
+}
