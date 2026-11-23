@@ -1,0 +1,17 @@
+{
+  "env": {
+    "ANTHROPIC_API_KEY": "sk-test-hybrid",
+    "ANTHROPIC_BASE_URL": "https://api.hybrid.example.com",
+    "NO_PROXY": "api.hybrid.example.com"
+  },
+  "model": "claude-opus-5.5",
+  "modelSettings": {
+    "claude-opus-5.5": {
+      "effortLevel": "xhigh"
+    }
+  },
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "skipDangerousModePermissionPrompt": true
+}

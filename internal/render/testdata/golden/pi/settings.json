@@ -1,0 +1,9 @@
+{
+  "compaction": {
+    "enabled": true
+  },
+  "defaultModel": "deepseek-flash",
+  "defaultProvider": "ds",
+  "defaultThinkingLevel": "high",
+  "quietStartup": true
+}

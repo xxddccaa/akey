@@ -1,0 +1,290 @@
+# akey 主配置示例（master.yaml）
+#
+# 这是唯一需要手写的配置：akey 把它加密后存到服务器，`akey pull` 时在本机解密，
+# 再渲染成各个 Agent 的原生配置文件（整文件覆盖，旧文件先备份）：
+#   codex    -> ~/.codex/config.toml
+#   xdcode   -> ~/.xdcode/config.toml
+#   claude   -> ~/.claude/settings.json
+#   opencode -> ~/.config/opencode/opencode.jsonc
+#   pi       -> ~/.pi/agent/models.json + settings.json
+#
+# 本文件里的 Key 全是假的（sk-test-...），仅用于演示和测试。
+# 本地预览渲染结果：akey render testdata/master.example.yaml --out /tmp/akey-out
+
+version: 1
+
+# ---------------------------------------------------------------------------
+# providers：厂商（接入点）。键名就是 provider id，会原样出现在各工具配置里
+# （codex/xdcode 的 [model_providers.<id>]、opencode/pi 的 provider id）。
+#
+#   name       显示名，默认等于 id
+#   key        API Key，会直接内联写进各工具配置（这些文件权限为 0600）
+#   openai     OpenAI 协议接入点
+#     base_url   带 /v1，例如 https://api.openai.com/v1
+#     wire       responses（默认）| chat
+#                codex/xdcode 只能用 responses；opencode/pi 两种都能用
+#   anthropic  Anthropic 协议接入点
+#     base_url   与 ANTHROPIC_BASE_URL 相同，不带 /v1（写了也会自动去掉；
+#                opencode 需要的 /v1 由 akey 自动补上）
+#     auth       api_key（默认，x-api-key / ANTHROPIC_API_KEY）
+#                | bearer（Authorization: Bearer / ANTHROPIC_AUTH_TOKEN）
+#   overrides  按工具名写的覆盖项，用该工具的原生键名，深度合并进这个厂商
+#              生成出来的配置块：
+#                codex/xdcode -> [model_providers.<id>]
+#                opencode     -> provider.<id>
+#                pi           -> models.json 的 providers.<id>
+#                claude       -> settings.json 根对象（claude 没有厂商块）
+#              合并规则：对象递归合并；字符串/数字/数组直接替换；写 null 表示删除该键。
+#
+# 同时声明 openai 和 anthropic 的厂商，在 opencode 和 pi 里会拆成两个：
+#   <id>（OpenAI 协议）和 <id>-anthropic（Anthropic 协议）。
+# ---------------------------------------------------------------------------
+providers:
+  relay:
+    name: Relay
+    key: sk-test-relay
+    openai:
+      base_url: https://relay.example.com/v1
+      wire: responses
+
+  ds:
+    name: DeepSeek
+    key: sk-test-ds
+    openai:
+      base_url: https://api.deepseek.com/v1   # wire 省略时默认 responses
+
+  gateway:
+    name: Gateway
+    key: sk-test-gateway
+    openai:
+      base_url: https://gw.gateway.example.com/v1
+    overrides:
+      xdcode:
+        supports_standalone_web_search: false
+      codex:
+        stream_idle_timeout_ms: 600000
+
+  # 只支持 Chat Completions 的厂商：codex/xdcode 用不了，只会出现在 opencode 和 pi 里。
+  openrouter:
+    name: OpenRouter
+    key: sk-test-openrouter
+    openai:
+      base_url: https://openrouter.ai/api/v1
+      wire: chat
+    overrides:
+      opencode:
+        options:
+          headers:
+            HTTP-Referer: https://github.com/example/akey
+            X-Title: akey
+
+  # 只有 Anthropic 接入点、用 Bearer 鉴权的厂商：claude、opencode、pi 可用。
+  claudeproxy:
+    name: Claude Gateway
+    key: sk-test-claudeproxy
+    anthropic:
+      base_url: https://claude-gw.example.com
+      auth: bearer
+
+  # 同时提供两种协议的厂商。
+  hybrid:
+    name: Hybrid
+    key: sk-test-hybrid
+    openai:
+      base_url: https://api.hybrid.example.com/v1
+    anthropic:
+      base_url: https://api.hybrid.example.com
+    overrides:
+      claude:
+        env:
+          NO_PROXY: api.hybrid.example.com
+
+# ---------------------------------------------------------------------------
+# models：模型目录。
+#
+#   id                全文件唯一；工具里的 default_model / models 引用的就是它
+#   provider          上面 providers 的键
+#   model             上游真实模型名，默认等于 id
+#   name              显示名，默认等于 model
+#   api               openai | anthropic；厂商只有一种协议时可省略，
+#                     两种都有时默认 openai
+#   context_window    上下文窗口（token）
+#   auto_compact      自动压缩阈值（token），codex/xdcode 使用
+#   max_output        最大输出 token，opencode/pi 使用
+#   reasoning_efforts 支持的思考强度，例如 none/minimal/low/medium/high/xhigh/max
+#   default_effort    默认思考强度
+#   input             输入模态：text、image（opencode/pi 使用）
+#   compatibility     仅 xdcode 使用，默认 responses
+#   tools             只给这些工具用；省略 = 所有协议兼容的工具
+#   overrides         按工具名深度合并进该模型生成的条目：
+#                       xdcode   -> 对应的 [[models]] 条目
+#                       opencode -> provider.<id>.models.<model>
+#                       pi       -> models.json 里对应的模型
+#                       codex    -> 根（仅当它是 codex 的默认模型时）
+#                       claude   -> modelSettings.<model>（仅当它是默认模型时）
+#
+# 思考强度在各工具里的对应关系：
+#   codex/xdcode：原样写入 model_reasoning_effort / reasoning_efforts
+#   claude：modelSettings.<model>.effortLevel
+#   opencode：每个强度生成一个 variant；默认强度写进模型 options
+#   pi：生成 thinkingLevelMap（off<-none，xhigh 缺失时用 max 顶上，不支持的级别置 null）；
+#       默认强度 none->off，max/ultra->xhigh
+# ---------------------------------------------------------------------------
+models:
+  - id: relay-gpt-6.1-sol
+    provider: relay
+    model: gpt-6.1-sol
+    name: GPT-6.1 Sol (Relay)
+    context_window: 1000000
+    auto_compact: 850000
+    reasoning_efforts: [low, medium, high, xhigh, max]
+    default_effort: high
+    input: [text, image]
+
+  - id: relay-gpt-6.1-terra
+    provider: relay
+    model: gpt-6.1-terra
+    name: GPT-6.1 Terra (Relay)
+    max_output: 128000
+    reasoning_efforts: [none, low, medium, high, xhigh, max]
+    default_effort: medium
+    compatibility: unverified
+
+  - id: ds-flash
+    provider: ds
+    model: deepseek-flash
+    name: DeepSeek Flash
+    context_window: 1000000
+    auto_compact: 850000
+    reasoning_efforts: [none, low, high, max]
+    default_effort: max
+
+  - id: gateway-gpt-6.1-sol
+    provider: gateway
+    model: gpt-6.1-sol
+    name: GPT-6.1 Sol (Gateway)
+    context_window: 1000000
+    auto_compact: 850000
+    reasoning_efforts: [low, medium, high, xhigh, max]
+    default_effort: high
+    overrides:
+      xdcode:
+        auto_compact_token_limit: 800000
+
+  - id: openrouter-qwen-coder
+    provider: openrouter
+    model: qwen/qwen3.8-coder
+    name: Qwen3.8 Coder (OpenRouter)
+    context_window: 262144
+    max_output: 65536
+    reasoning_efforts: [low, medium, high]
+    default_effort: medium
+    overrides:
+      pi:
+        compat:
+          supportsDeveloperRole: false
+
+  - id: hybrid-gpt-6-astra
+    provider: hybrid
+    model: gpt-6-astra
+    name: GPT-6 Astra (Hybrid)
+    api: openai
+    context_window: 1000000
+    reasoning_efforts: [low, medium, high, xhigh, max]
+    default_effort: high
+    tools: [codex, xdcode, opencode]   # pi 里不出现
+
+  - id: hybrid-claude-opus
+    provider: hybrid
+    model: claude-opus-5.5
+    name: Claude Opus 5.5 (Hybrid)
+    api: anthropic
+    context_window: 1000000
+    max_output: 64000
+    reasoning_efforts: [low, medium, high, xhigh, max]
+    default_effort: xhigh
+    input: [text, image]
+
+  - id: claudeproxy-sonnet
+    provider: claudeproxy
+    model: claude-sonnet-5
+    name: Claude Sonnet 5 (Gateway)
+    context_window: 200000
+    max_output: 64000
+    reasoning_efforts: [low, medium, high]
+    input: [text, image]
+
+# ---------------------------------------------------------------------------
+# tools：要配置的工具。只有出现在这里且没有 enabled: false 的工具才会被写入。
+#
+#   enabled         默认 true
+#   default_model   必填，models 里的 id，且该工具必须能用它
+#   default_effort  覆盖默认模型自己的 default_effort
+#   models          只把这些模型放进该工具的目录（默认模型总会包含）；
+#                   省略 = 所有兼容的模型
+#   install         `akey pull --install-missing` 在找不到该工具时执行的安装命令
+#   extra           用工具原生键名写，最后深度合并到生成结果之上，可以覆盖任何生成项
+#                   （codex/xdcode 是 config.toml 根，claude 是 settings.json，
+#                   opencode 是 opencode.jsonc，pi 是 settings.json）
+#   files           额外写进该工具配置目录的文件：相对路径 -> 文件内容
+#                   （不允许绝对路径和 ..，也不能和生成的文件重名）
+# ---------------------------------------------------------------------------
+tools:
+  codex:
+    default_model: relay-gpt-6.1-sol
+    install: npm i -g @openai/codex
+    extra:
+      approval_policy: never
+      sandbox_mode: danger-full-access
+      model_reasoning_summary: detailed
+      features:
+        multi_agent: true
+    files:
+      AGENTS.md: |
+        # 全局约定
+        - 回答用中文。
+        - 修改代码前先读相关文件。
+
+  xdcode:
+    default_model: gateway-gpt-6.1-sol
+    default_effort: xhigh
+    extra:
+      plan_mode_reasoning_effort: xhigh
+      approval_policy: never
+      sandbox_mode: danger-full-access
+      agents:
+        max_threads: 10
+      analytics:
+        enabled: false
+      features:
+        multi_agent: true
+        unified_exec: true
+      tui:
+        status_line: [model-with-reasoning, provider, current-dir, git-branch, context-remaining]
+
+  claude:
+    default_model: hybrid-claude-opus
+    install: npm i -g @anthropic-ai/claude-code
+    extra:
+      permissions:
+        defaultMode: bypassPermissions
+      skipDangerousModePermissionPrompt: true
+    files:
+      CLAUDE.md: |
+        回答用中文。
+
+  opencode:
+    default_model: hybrid-claude-opus
+    install: npm i -g opencode-ai
+    extra:
+      autoupdate: false
+
+  pi:
+    default_model: ds-flash
+    default_effort: high
+    models: [ds-flash, openrouter-qwen-coder, hybrid-claude-opus, claudeproxy-sonnet]
+    install: npm i -g @mariozechner/pi-coding-agent
+    extra:
+      quietStartup: true
+      compaction:
+        enabled: true

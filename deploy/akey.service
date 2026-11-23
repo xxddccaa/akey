@@ -1,0 +1,51 @@
+# akey server. Install:
+#   sudo install -m 0755 dist/akey-linux-amd64 /usr/local/bin/akey
+#   sudo mkdir -p /usr/local/share/akey/dist && sudo cp dist/akey-* dist/SHA256SUMS /usr/local/share/akey/dist/
+#   sudo cp deploy/akey.service /etc/systemd/system/   # then replace YOUR_IP below
+#   sudo systemctl daemon-reload && sudo systemctl enable --now akey
+#   sudo journalctl -u akey -n 50   # banner: pin, install commands, one-time admin token
+[Unit]
+Description=akey - encrypted agent config server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/akey serve --listen :8787 --data /var/lib/akey --dist /usr/local/share/akey/dist --host YOUR_IP
+Restart=on-failure
+RestartSec=3
+
+# Unprivileged, throwaway user; /var/lib/akey is its private state dir.
+DynamicUser=yes
+StateDirectory=akey
+StateDirectoryMode=0700
+UMask=0077
+
+# Hardening
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

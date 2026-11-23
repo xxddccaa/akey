@@ -1,0 +1,107 @@
+{
+  "providers": {
+    "claudeproxy": {
+      "api": "anthropic-messages",
+      "apiKey": "sk-test-claudeproxy",
+      "authHeader": true,
+      "baseUrl": "https://claude-gw.example.com",
+      "models": [
+        {
+          "contextWindow": 200000,
+          "id": "claude-sonnet-5",
+          "input": [
+            "text",
+            "image"
+          ],
+          "maxTokens": 64000,
+          "name": "Claude Sonnet 5 (Gateway)",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "high": "high",
+            "low": "low",
+            "medium": "medium",
+            "minimal": null,
+            "off": null,
+            "xhigh": null
+          }
+        }
+      ],
+      "name": "Claude Gateway"
+    },
+    "ds": {
+      "api": "openai-responses",
+      "apiKey": "sk-test-ds",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "models": [
+        {
+          "contextWindow": 1000000,
+          "id": "deepseek-flash",
+          "name": "DeepSeek Flash",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "high": "high",
+            "low": "low",
+            "medium": null,
+            "minimal": null,
+            "off": "none",
+            "xhigh": "max"
+          }
+        }
+      ],
+      "name": "DeepSeek"
+    },
+    "hybrid-anthropic": {
+      "api": "anthropic-messages",
+      "apiKey": "sk-test-hybrid",
+      "baseUrl": "https://api.hybrid.example.com",
+      "models": [
+        {
+          "contextWindow": 1000000,
+          "id": "claude-opus-5.5",
+          "input": [
+            "text",
+            "image"
+          ],
+          "maxTokens": 64000,
+          "name": "Claude Opus 5.5 (Hybrid)",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "high": "high",
+            "low": "low",
+            "medium": "medium",
+            "minimal": null,
+            "off": null,
+            "xhigh": "xhigh"
+          }
+        }
+      ],
+      "name": "Hybrid (Anthropic)"
+    },
+    "openrouter": {
+      "api": "openai-completions",
+      "apiKey": "sk-test-openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "models": [
+        {
+          "compat": {
+            "supportsDeveloperRole": false
+          },
+          "contextWindow": 262144,
+          "id": "qwen/qwen3.8-coder",
+          "maxTokens": 65536,
+          "name": "Qwen3.8 Coder (OpenRouter)",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "high": "high",
+            "low": "low",
+            "medium": "medium",
+            "minimal": null,
+            "off": null,
+            "xhigh": null
+          }
+        }
+      ],
+      "name": "OpenRouter"
+    }
+  }
+}

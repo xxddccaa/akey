@@ -1,0 +1,6 @@
+/bin/
+/dist/
+# master configs contain plaintext API keys — never commit them
+master*.yaml
+!testdata/master.example.yaml
+*.akey-bak-*

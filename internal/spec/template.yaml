@@ -1,0 +1,39 @@
+# akey master config. Encrypted on your machine; the server only sees ciphertext.
+# Full example: testdata/master.example.yaml in the akey repo.
+version: 1
+
+providers:
+  myprovider:
+    name: My Provider
+    key: sk-test-replace-me
+    openai:
+      base_url: https://api.example.com/v1
+      wire: responses          # responses | chat
+    # anthropic:               # optional, for claude (and opencode/pi)
+    #   base_url: https://api.example.com
+    #   auth: api_key          # api_key | bearer
+
+models:
+  - id: my-model
+    provider: myprovider
+    model: gpt-5.5             # upstream model name
+    name: GPT-5.5 (My Provider)
+    context_window: 272000
+    auto_compact: 244800
+    reasoning_efforts: [low, medium, high, xhigh]
+    default_effort: high
+
+tools:
+  codex:
+    default_model: my-model
+    # install: npm i -g @openai/codex
+    # extra: {approval_policy: never}
+  xdcode:
+    default_model: my-model
+  opencode:
+    default_model: my-model
+  pi:
+    default_model: my-model
+  # claude needs a provider with an anthropic endpoint:
+  # claude:
+  #   default_model: my-claude-model
